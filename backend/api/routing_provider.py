@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 from decimal import Decimal
 from http.client import HTTPException
+from ssl import SSLCertVerificationError
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import urlopen
@@ -23,6 +24,10 @@ class RoutingProviderError(Exception):
 
 class RoutingTimeout(RoutingProviderError):
     """The connection to the provider timed out."""
+
+
+class RoutingCertificateError(RoutingProviderError):
+    """The provider certificate chain failed verification."""
 
 
 def find_truck_routes(
@@ -61,9 +66,13 @@ def find_truck_routes(
         raise RoutingProviderError("Routing request failed") from None
     except TimeoutError:
         raise RoutingTimeout("Routing request timed out") from None
+    except SSLCertVerificationError:
+        raise RoutingCertificateError("Routing certificate verification failed") from None
     except URLError as error:
         if isinstance(error.reason, TimeoutError):
             raise RoutingTimeout("Routing request timed out") from None
+        if isinstance(error.reason, SSLCertVerificationError):
+            raise RoutingCertificateError("Routing certificate verification failed") from None
         raise RoutingProviderError("Routing request failed") from None
     except (OSError, HTTPException, ValueError, KeyError, TypeError, OverflowError):
         raise RoutingProviderError("Routing provider returned an unusable response") from None

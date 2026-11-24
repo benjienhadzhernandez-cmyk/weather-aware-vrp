@@ -11,7 +11,7 @@ from django.views.decorators.http import require_GET
 
 from .route_recommendations import rank_routes
 from .routing_models import Coordinates, Route
-from .routing_provider import RoutingProviderError, RoutingTimeout, find_truck_routes
+from .routing_provider import RoutingCertificateError, RoutingProviderError, RoutingTimeout, find_truck_routes
 from .weather_provider import WeatherProviderError, WeatherProviderTimeout
 from .weather_risk import CheckpointAssessment, assess_routes_weather
 
@@ -134,6 +134,8 @@ def _routing_error(error: RoutingProviderError) -> JsonResponse:
         return JsonResponse({"error": "Truck routing is not configured"}, status=503)
     if isinstance(error, RoutingTimeout):
         return JsonResponse({"error": "Truck routing provider timed out"}, status=504)
+    if isinstance(error, RoutingCertificateError):
+        return JsonResponse({"error": "Could not verify the truck routing provider's TLS certificate"}, status=502)
     return JsonResponse({"error": "Truck routing provider is unavailable"}, status=502)
 
 

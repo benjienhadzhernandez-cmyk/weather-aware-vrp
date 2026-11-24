@@ -44,8 +44,9 @@ export type Recommendations = {
 export type TripFields = { origin: string; destination: string; cargo: string; departure: string };
 
 const DECIMAL = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/;
-const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
+const DAY_MS = 24 * 60 * MINUTE_MS;
+const WEEK_MS = 7 * DAY_MS;
 const NUMBER_FORMAT = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
 const TIME_FORMAT = new Intl.DateTimeFormat(undefined, {
   month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short",
@@ -89,6 +90,32 @@ function parseCoordinates(value: string, label: string): Coordinates {
   return { latitude, longitude };
 }
 
+function localDateTime(timestamp: number): string {
+  const offset = new Date(timestamp).getTimezoneOffset();
+  return new Date(timestamp - offset * MINUTE_MS).toISOString().slice(0, 16);
+}
+
+function parseDeparture(value: string): Date {
+  const departure = new Date(value);
+  const timestamp = departure.getTime();
+  if (!Number.isFinite(timestamp) || localDateTime(timestamp) !== value) {
+    throw new Error("Choose a valid local departure time.");
+  }
+
+  const offset = departure.getTimezoneOffset();
+  for (const nearby of [timestamp - DAY_MS, timestamp + DAY_MS]) {
+    const offsetDifference = new Date(nearby).getTimezoneOffset() - offset;
+    if (offsetDifference && localDateTime(timestamp + offsetDifference * MINUTE_MS) === value) {
+      throw new Error("That local time occurs twice when the clocks move back. Choose a different departure time.");
+    }
+  }
+  const now = Date.now();
+  if (timestamp < now - MINUTE_MS || timestamp > now + WEEK_MS) {
+    throw new Error("Choose a departure within the next seven days.");
+  }
+  return departure;
+}
+
 export function tripQuery(fields: TripFields): URLSearchParams {
   const origin = parseCoordinates(fields.origin, "Origin");
   const destination = parseCoordinates(fields.destination, "Destination");
@@ -106,18 +133,7 @@ export function tripQuery(fields: TripFields): URLSearchParams {
     cargo_weight_kg: String(cargo),
   });
   if (fields.departure) {
-    const departure = new Date(fields.departure);
-    const timestamp = departure.getTime();
-    const localIso = Number.isNaN(timestamp) ? "" :
-      new Date(timestamp - departure.getTimezoneOffset() * MINUTE_MS).toISOString().slice(0, 16);
-    if (localIso !== fields.departure) {
-      throw new Error("Choose a valid local departure time.");
-    }
-    const now = Date.now();
-    if (timestamp < now - MINUTE_MS || timestamp > now + WEEK_MS) {
-      throw new Error("Choose a departure within the next seven days.");
-    }
-    query.set("departure_at", departure.toISOString());
+    query.set("departure_at", parseDeparture(fields.departure).toISOString());
   }
   return query;
 }

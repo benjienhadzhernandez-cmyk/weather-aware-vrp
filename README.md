@@ -14,38 +14,66 @@ React and Django application for comparing truck routes using forecast weather, 
 
 ## Run locally (PowerShell)
 
-Backend terminal:
+From the project root, create `.env` if it is missing.
+
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+```
+
+Open `.env` and set `TOMTOM_API_KEY` to a key with TomTom Routing API access. The file also supports optional Open-Meteo and Django settings. Existing environment variables take precedence. Git ignores `.env`.
+
+In the backend terminal, create and install the virtual environment, then start Django.
 
 ```powershell
 py -3 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r backend\requirements.txt
-python backend\manage.py runserver 8000
+.\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+.\.venv\Scripts\python.exe backend\manage.py runserver 127.0.0.1:8000
 ```
 
-Frontend terminal:
+In a second terminal opened at the project root, install the frontend dependencies and start Vite.
 
 ```powershell
-cd frontend
-npm ci
-npm run dev
+Set-Location frontend
+npm.cmd ci
+npm.cmd run dev
 ```
 
-Open the URL printed by Vite. `/api` requests are proxied to Django at port 8000. The health endpoint is `http://127.0.0.1:8000/api/health/`.
+Open the URL printed by Vite, usually `http://localhost:5173/`. Leave both servers running. Vite proxies `/api` to Django at port 8000.
 
-In RouteWise, enter origin and destination as latitude and longitude in decimal degrees and choose **Compare routes**. Select a route in the comparison and move the checkpoint slider to inspect its forecast. The basemap loads tiles from OpenStreetMap. Route lines and checkpoint data remain available on a plain background if tiles cannot load.
+In RouteWise, choose **Use example** to fill a Los Angeles to Las Vegas trip, then choose **Compare routes**. Select a route and move the checkpoint slider to inspect its forecast. You can also enter your own coordinates as latitude and longitude in decimal degrees. The departure input uses the device's time zone and rejects local times that are skipped or repeated during a clock change. The OpenStreetMap basemap is optional for viewing the route lines and checkpoint data.
 
-The backend supports `DJANGO_DEBUG`, `DJANGO_SECRET_KEY`, and `DJANGO_ALLOWED_HOSTS` environment variables. Defaults are for local development only; configure a strong secret and disable debug mode before deployment.
+### Verify the local setup
+
+Run these commands from the project root.
+
+```powershell
+.\.venv\Scripts\python.exe backend\manage.py check
+.\.venv\Scripts\python.exe backend\manage.py test api
+npm.cmd --prefix frontend run build
+```
+
+With Django running, check the health endpoint and the example trip.
+
+```powershell
+Invoke-RestMethod 'http://127.0.0.1:8000/api/health/'
+$trip = Invoke-RestMethod 'http://127.0.0.1:8000/api/recommendations/?origin=34.05,-118.25&destination=36.17,-115.14&cargo_weight_kg=5000'
+$trip.recommendation_status
+$trip.routes | Format-Table route_id, rank, weather_coverage, scored_checkpoints, checkpoint_count
+```
+
+The live example returned three truck routes and a weather-based recommendation on November 24, 2026. Route options, forecast coverage, and the recommendation vary with provider data and departure time.
+
+### Troubleshoot local requests
+
+- If the frontend reports **API unavailable**, run the health request above. Check that Django is listening on port 8000 and that the browser is open to the Vite URL.
+- If routing returns `503`, confirm `.env` is in the project root, check that `TOMTOM_API_KEY` is set, and restart Django. Check whether a Windows environment variable is overriding the file.
+- If routing returns `502` with a provider TLS certificate message, check the machine clock, update your Python and system trust configuration, and check whether your network uses an HTTPS inspection proxy. If your network administrator supplies a trusted CA bundle, set the backend session's `SSL_CERT_FILE` to its PEM path before starting Django. Keep certificate verification enabled.
+- For other `502` errors, check that the configured key has Routing API access and that the server can reach the provider named in the error. For a `504`, retry after the provider responds again.
+- If routes are present with incomplete weather, inspect their scored checkpoint counts. Routes missing any checkpoint risk remain unranked.
+
+The `DJANGO_DEBUG`, `DJANGO_SECRET_KEY`, and `DJANGO_ALLOWED_HOSTS` defaults are for local development. Configure the deployment environment with debug mode disabled, a strong secret, and the intended hostnames.
 
 ## Truck route options
-
-If the project root has no `.env`, copy the template:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-Open `.env`, paste your TomTom Routing API key after `TOMTOM_API_KEY=`, and restart Django. The file also supports optional Open-Meteo and Django settings. Existing environment variables take precedence. Git ignores `.env`.
 
 From a second terminal, send origin and destination as `latitude,longitude` in signed decimal degrees.
 

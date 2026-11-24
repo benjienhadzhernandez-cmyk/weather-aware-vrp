@@ -1,5 +1,6 @@
 import io
 import json
+from ssl import SSLCertVerificationError
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlsplit
@@ -93,6 +94,13 @@ class TruckRouteTests(SimpleTestCase):
     @patch("api.routing_provider.urlopen", side_effect=URLError(TimeoutError()))
     def test_returns_gateway_timeout(self, _open_url):
         self.assertEqual(self.client.get(self.url).status_code, 504)
+
+    @patch("api.routing_provider.urlopen", side_effect=URLError(SSLCertVerificationError(1, "private CA detail")))
+    def test_reports_certificate_verification_failure_without_exposing_details(self, _open_url):
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json(), {"error": "Could not verify the truck routing provider's TLS certificate"})
 
     @patch("api.routing_provider.urlopen")
     def test_returns_gateway_timeout_for_provider_compute_limit(self, open_url):
