@@ -50,7 +50,7 @@ h2 { font-size: 21px; line-height: 1.35; font-weight: 800; }
 
 .trip-form { display: grid; gap: 12px; padding: 0 21px 20px; }
 .trip-form label { display: block; color: #29483e; font-size: 13px; font-weight: 700; }
-.trip-form input { display: block; min-width: 0; width: 100%; min-height: 40px; margin-top: 5px; padding: 7px 10px; border: 1px solid #cbd9d1; border-radius: 8px; background: #fff; color: #20352e; font-size: 14px; }
+.trip-form input, .trip-form select { display: block; min-width: 0; width: 100%; min-height: 40px; margin-top: 5px; padding: 7px 10px; border: 1px solid #cbd9d1; border-radius: 8px; background: #fff; color: #20352e; font-size: 14px; }
 .trip-form input::placeholder { color: #667b70; }
 .optional { margin-left: 4px; color: var(--muted); font-size: 11px; font-weight: 500; }
 .field-hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
@@ -78,6 +78,15 @@ h2 { font-size: 21px; line-height: 1.35; font-weight: 800; }
 .checkpoint-popup .checkpoint-note { margin: 7px 0 0; font-size: 12px; }
 .map-message { position: absolute; z-index: 1000; top: 9px; left: 58px; right: 9px; width: fit-content; max-width: calc(100% - 67px); margin: 0; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: #fff; font-size: 12px; color: var(--muted); }
 .map-footer { display: flex; justify-content: flex-end; gap: 13px; flex-wrap: wrap; padding: 8px 16px 11px; color: var(--muted); font-size: 11px; }
+.corridor-controls { display: grid; gap: 7px; margin: 11px 12px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
+.corridor-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px; }
+.corridor-heading h3 { margin: 0; font-size: 14px; }
+.corridor-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+.corridor-controls input[type="range"] { width: 100%; margin: 0; accent-color: var(--deep-green); }
+.corridor-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; list-style: none; margin: 2px 0 0; padding: 0; }
+.corridor-legend li { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+.corridor-legend li span { width: 13px; border-top-width: 3px; }
+.corridor-note { margin: 0; color: var(--muted); font-size: 12px; }
 
 .empty-state, .result-trip, .coverage-note, .checkpoint-note { color: var(--muted); font-size: 13px; line-height: 1.55; }
 .empty-state { margin: 0; padding: 0 21px 21px; }

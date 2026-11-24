@@ -3,13 +3,13 @@ import type { FormEvent } from "react";
 import CheckpointDetails from "./CheckpointDetails";
 import RouteMap from "./RouteMap";
 import type { RouteMapHandle } from "./RouteMap";
-import { fetchRecommendations, formatDistance, formatDuration, formatNumber, formatTime, parseCoordinates, routeStyle, tripQuery } from "./routes";
+import { fetchRecommendations, formatDistance, formatDuration, formatNumber, formatPounds, formatTime, parseCoordinates, routeStyle, RISK_STYLES, tripQuery } from "./routes";
 import type { Coordinates, Recommendations, Route, TripFields } from "./routes";
 
 type ConnectionState = "checking" | "connected" | "unavailable";
 
 const EMPTY_ROUTES: Route[] = [];
-const INITIAL_FIELDS: TripFields = { origin: "", destination: "", cargo: "", departure: "" };
+const INITIAL_FIELDS: TripFields = { origin: "", destination: "", cargo: "", departure: "", interval: "50" };
 
 function endpointCoordinates(value: string): Coordinates | null {
   try {
@@ -150,7 +150,7 @@ export default function App() {
             <h2 id="trip-title">Trip details</h2>
             <button className="quiet-button" type="button" onClick={() => {
               resetComparison();
-              setFields({ origin: "34.05, -118.25", destination: "36.17, -115.14", cargo: "5000", departure: "" });
+              setFields({ ...INITIAL_FIELDS, origin: "34.05, -118.25", destination: "36.17, -115.14", cargo: "11000" });
             }}>Use example</button>
           </div>
           <form className="trip-form" onSubmit={submitTrip} aria-busy={isLoading}>
@@ -163,9 +163,16 @@ export default function App() {
               <input type="text" value={fields.destination} placeholder="36.17, -115.14" required
                 aria-describedby="coordinates-hint" onChange={(event) => setField("destination", event.currentTarget.value)} />
             </label>
-            <label>Cargo weight (kg)
+            <label>Cargo weight (lb)
               <input type="number" min="0" step="any" value={fields.cargo} inputMode="decimal" required
-                placeholder="5000" onChange={(event) => setField("cargo", event.currentTarget.value)} />
+                placeholder="11000" onChange={(event) => setField("cargo", event.currentTarget.value)} />
+            </label>
+            <label>Checkpoint spacing
+              <select value={fields.interval} onChange={(event) => setField("interval", event.currentTarget.value)}>
+                <option value="10">10 miles</option>
+                <option value="25">25 miles</option>
+                <option value="50">50 miles</option>
+              </select>
             </label>
             <label>Departure time <span className="optional">Optional</span>
               <input type="datetime-local" value={fields.departure} aria-describedby="departure-hint"
@@ -188,11 +195,13 @@ export default function App() {
           {results?.recommendation_status === "no_routes" && <p className="empty-state" role="status">No eligible truck routes were found for this trip.</p>}
           {results && routes.length > 0 && (
             <div className="route-results">
-              <p className="result-trip">{formatTime(results.departure_at)} · {formatNumber(results.cargo_weight_kg)} kg cargo</p>
+              <p className="result-trip">{formatTime(results.departure_at)} · {formatPounds(results.cargo_weight_kg)} cargo</p>
               {results.recommendation_status === "insufficient_weather" ? (
-                <p className="coverage-note" role="status">No recommendation is available because every route has incomplete forecast coverage.</p>
+                <p className="coverage-note" role="status">No recommendation is available. The remaining routes have incomplete forecast coverage.</p>
+              ) : results.recommendation_status === "no_travel" ? (
+                <p className="coverage-note" role="status">No route qualifies for a recommendation. Forecasts show No Travel conditions.</p>
               ) : routes.some((route) => route.rank === null) ? (
-                <p className="coverage-note">The recommendation compares routes with complete checkpoint coverage.</p>
+                <p className="coverage-note">Ranking excludes routes with incomplete forecasts or No Travel conditions.</p>
               ) : null}
               <ul className="route-options">
                 {routes.map((route, index) => (
@@ -213,10 +222,20 @@ export default function App() {
                       </span>
                       <span className="route-metrics">
                         <span>{formatDistance(route.distance_m)}</span><span>{formatDuration(route.duration_s)}</span>
-                        <span>{route.peak_risk_score == null ? "Unranked" : `Peak risk ${formatNumber(route.peak_risk_score)}/100`}</span>
+                        <span>{route.risk_category ? RISK_STYLES[route.risk_category].label : "Risk unknown"}</span>
                       </span>
+                      {route.assessment_error ? (
+                        <span className="route-coverage">{route.assessment_error}</span>
+                      ) : <>
                       <span className="route-coverage">{route.scored_checkpoints}/{route.checkpoint_count} checkpoints scored
-                        {route.mean_risk_score != null && ` · Mean risk ${formatNumber(route.mean_risk_score)}/100`}</span>
+                        {route.average_risk_score != null && ` · Average risk ${formatNumber(route.average_risk_score)}/100`}</span>
+                      <span className="route-coverage">
+                        {route.severe_miles == null ? "Severe miles unknown" : `${formatNumber(route.severe_miles)} severe mi`}
+                        {" · "}
+                        {route.high_miles == null ? "High miles unknown" : `${formatNumber(route.high_miles)} high mi`}
+                        {route.no_travel_miles != null && ` · ${formatNumber(route.no_travel_miles)} No Travel mi`}
+                      </span>
+                      </>}
                     </button>
                   </li>
                 ))}

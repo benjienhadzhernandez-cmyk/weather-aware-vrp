@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from http.client import HTTPException
 from urllib.error import HTTPError, URLError
@@ -18,11 +19,16 @@ _FIELDS = {
     "wind_speed_m_per_s": "wind_speed_10m",
     "wind_gust_m_per_s": "wind_gusts_10m",
     "visibility_m": "visibility",
+    "rain_mm": "rain",
+    "showers_mm": "showers",
+    "snowfall_cm": "snowfall",
 }
 _FORECAST_DAYS = 7
 _ARRIVAL_CLOCK_TOLERANCE = timedelta(minutes=1)
 _TIMEOUT_S = 8
 _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+_LOCATIONS_PER_REQUEST = 32
+_MAX_CONCURRENT_REQUESTS = 4
 
 
 class WeatherProviderError(Exception):
@@ -50,22 +56,28 @@ def fetch_checkpoint_forecasts(
             raise ValueError("checkpoint arrival must include a time zone")
         arrival = arrival.astimezone(UTC)
         if now - _ARRIVAL_CLOCK_TOLERANCE <= arrival < horizon:
-            forecast_hour = _forecast_hour(arrival)
-            if forecast_hour < horizon:
-                active.append((index, checkpoint, forecast_hour))
+            hour = forecast_hour(arrival)
+            if hour < horizon:
+                active.append((index, checkpoint, hour))
 
     forecasts: list[WeatherForecast | None] = [None] * len(arrivals)
     if not active:
         return tuple(forecasts)
 
     positions = list(dict.fromkeys(checkpoint.position for _, checkpoint, _ in active))
-    by_position = dict(zip(positions, _load_hourly(positions, api_key), strict=True))
-    for index, checkpoint, forecast_hour in active:
-        forecasts[index] = _select_forecast(checkpoint, forecast_hour, by_position[checkpoint.position])
+    batches = [positions[index:index + _LOCATIONS_PER_REQUEST] for index in range(0, len(positions), _LOCATIONS_PER_REQUEST)]
+    if len(batches) == 1:
+        hourly = _load_hourly(positions, api_key)
+    else:
+        with ThreadPoolExecutor(max_workers=_MAX_CONCURRENT_REQUESTS) as executor:
+            hourly = [row for result in executor.map(_load_hourly, batches, [api_key] * len(batches)) for row in result]
+    by_position = dict(zip(positions, hourly, strict=True))
+    for index, checkpoint, hour in active:
+        forecasts[index] = _select_forecast(checkpoint, hour, by_position[checkpoint.position])
     return tuple(forecasts)
 
 
-def _forecast_hour(arrival: datetime) -> datetime:
+def forecast_hour(arrival: datetime) -> datetime:
     hour = arrival.replace(minute=0, second=0, microsecond=0)
     return hour if arrival == hour else hour + timedelta(hours=1)
 
@@ -140,9 +152,16 @@ def _select_forecast(checkpoint: Checkpoint, hour: datetime, hourly: dict) -> We
         if value is not None and type(value) not in (int, float):
             raise WeatherProviderError("Weather provider is unavailable")
         measurements[field] = value
-    if all(value is None for value in measurements.values()):
-        return None
+    rain = measurements.pop("rain_mm")
+    showers = measurements.pop("showers_mm")
+    snowfall = measurements.pop("snowfall_cm")
     try:
+        if any(value is not None and value < 0 for value in (rain, showers, snowfall)):
+            raise ValueError("Precipitation amounts must be nonnegative")
+        measurements["rain_in_per_h"] = (rain + showers) / 25.4 if rain is not None and showers is not None else None
+        measurements["snowfall_in_per_h"] = snowfall / 2.54 if snowfall is not None else None
+        if all(value is None for value in measurements.values()):
+            return None
         return WeatherForecast(checkpoint, hour, **measurements)
     except (ValueError, OverflowError):
         raise WeatherProviderError("Weather provider is unavailable") from None

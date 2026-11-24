@@ -4,7 +4,8 @@ import { createPortal } from "react-dom";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import CheckpointDetails from "./CheckpointDetails";
-import { routeStyle } from "./routes";
+import { corridorCategory, corridorSections } from "./corridor";
+import { formatDistance, formatTime, RISK_STYLES, routeStyle } from "./routes";
 import type { Coordinates, Endpoint, Route } from "./routes";
 
 export type RouteMapHandle = { fitRoute: (routeId: string) => void };
@@ -47,18 +48,35 @@ function fitRoutes(map: L.Map, bounds: L.LatLngBounds | null): void {
   }
 }
 
+function riskDistances(route: Route | undefined, hour: Route["corridor_forecast"][number] | undefined) {
+  const totals = { low: 0, moderate: 0, high: 0, severe: 0, no_travel: 0, unknown: 0 };
+  if (!route) return totals;
+  for (let index = 1; index < route.checkpoints.length; index += 1) {
+    const length = route.checkpoints[index].distance_from_origin_m - route.checkpoints[index - 1].distance_from_origin_m;
+    totals[corridorCategory(hour, index - 1)] += length;
+  }
+  return totals;
+}
+
 export default function RouteMap({ ref, routes, selectedRoute, checkpointIndex, onCheckpointSelect, origin, destination, onEndpointPick }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const bounds = useRef<L.LatLngBounds | null>(null);
   const markers = useRef<L.CircleMarker[]>([]);
   const routeLines = useRef(new Map<string, L.Polyline>());
+  const corridorLines = useRef<L.Polyline[]>([]);
   const [tilesUnavailable, setTilesUnavailable] = useState(false);
+  const [showCorridor, setShowCorridor] = useState(true);
+  const [forecastHour, setForecastHour] = useState(0);
   const [picking, setPicking] = useState<Endpoint | null>(null);
   const [pickStatus, setPickStatus] = useState("");
   const [checkpointPopup, setCheckpointPopup] = useState<CheckpointPopup | null>(null);
   const activePopup = !picking && checkpointPopup && checkpointPopup.route === selectedRoute && checkpointPopup.index === checkpointIndex
     ? checkpointPopup : null;
+  const forecastHours = selectedRoute?.corridor_forecast;
+  const forecast = forecastHours?.[forecastHour];
+  const showForecastControls = Boolean(forecastHours?.length);
+  const forecastDistances = showCorridor && showForecastControls ? riskDistances(selectedRoute, forecast) : null;
 
   useImperativeHandle(ref, () => ({
     fitRoute(routeId) {
@@ -71,6 +89,8 @@ export default function RouteMap({ ref, routes, selectedRoute, checkpointIndex, 
     if (!container.current) return;
     const instance = L.map(container.current, { scrollWheelZoom: true });
     map.current = instance;
+    instance.createPane("corridor").style.zIndex = "410";
+    instance.createPane("checkpoints").style.zIndex = "420";
     instance.attributionControl.setPrefix(false);
     fitRoutes(instance, null);
 
@@ -114,6 +134,27 @@ export default function RouteMap({ ref, routes, selectedRoute, checkpointIndex, 
   }, [routes]);
 
   useEffect(() => {
+    if (!map.current || !selectedRoute || !showCorridor || !showForecastControls) return;
+    const group = L.layerGroup().addTo(map.current);
+    const reference = routes[0]?.geometry[0]?.longitude ?? 0;
+    const sections = corridorSections(selectedRoute, routePositions(selectedRoute.geometry, reference));
+    corridorLines.current = sections.map((positions) => L.polyline(positions, {
+      pane: "corridor", weight: 6, opacity: 0.95, lineCap: "butt", interactive: false,
+    }).addTo(group));
+    return () => {
+      corridorLines.current = [];
+      group.remove();
+    };
+  }, [routes, selectedRoute, showCorridor, showForecastControls]);
+
+  useEffect(() => {
+    corridorLines.current.forEach((line, index) => {
+      const category = corridorCategory(forecast, index);
+      line.setStyle({ color: RISK_STYLES[category].color, dashArray: category === "unknown" ? "5 5" : undefined });
+    });
+  }, [routes, selectedRoute, showCorridor, showForecastControls, forecast]);
+
+  useEffect(() => {
     if (!map.current) return;
     const group = L.layerGroup().addTo(map.current);
     for (const [id, line] of routeLines.current) {
@@ -127,10 +168,11 @@ export default function RouteMap({ ref, routes, selectedRoute, checkpointIndex, 
     markers.current = selectedRoute?.checkpoints.map((checkpoint, index) => {
       const { latitude, longitude } = checkpoint.position;
       previousLongitude = longitudeNear(longitude, previousLongitude);
+      const riskLabel = RISK_STYLES[checkpoint.risk?.category ?? "unknown"].label;
       const marker = L.circleMarker([latitude, previousLongitude], {
-        weight: 2, fillOpacity: 1, bubblingMouseEvents: Boolean(picking),
+        pane: "checkpoints", weight: 2, fillOpacity: 1, bubblingMouseEvents: Boolean(picking),
       })
-        .bindTooltip(`Checkpoint ${index + 1}`)
+        .bindTooltip(`Checkpoint ${index + 1} · ${riskLabel}`)
         .addTo(group);
       if (!picking) {
         const openPopup = (keyboardTrigger: SVGElement | null) => {
@@ -142,7 +184,7 @@ export default function RouteMap({ ref, routes, selectedRoute, checkpointIndex, 
         if (!(element instanceof SVGElement)) return marker;
         element.setAttribute("role", "button");
         element.setAttribute("tabindex", "0");
-        element.setAttribute("aria-label", `Checkpoint ${index + 1} forecast`);
+        element.setAttribute("aria-label", `Checkpoint ${index + 1} forecast · ${riskLabel}`);
         element.addEventListener("keydown", (event) => {
           if (!(event instanceof KeyboardEvent) || (event.key !== "Enter" && event.key !== " ")) return;
           event.preventDefault();
@@ -160,7 +202,8 @@ export default function RouteMap({ ref, routes, selectedRoute, checkpointIndex, 
     markers.current.forEach((marker, index) => {
       const current = index === checkpointIndex;
       marker.setRadius(current ? 8 : 4);
-      marker.setStyle({ color: current ? "#fff" : "#175444", fillColor: current ? "#143e33" : "#ecfff7" });
+      const category = selectedRoute?.checkpoints[index]?.risk?.category ?? "unknown";
+      marker.setStyle({ color: current ? "#143e33" : "#fff", fillColor: RISK_STYLES[category].color });
       if (current) marker.bringToFront();
     });
   }, [routes, selectedRoute, checkpointIndex, picking]);
@@ -295,6 +338,35 @@ export default function RouteMap({ ref, routes, selectedRoute, checkpointIndex, 
         {picking && <span className="map-crosshair" aria-hidden="true">+</span>}
         {tilesUnavailable && <p className="map-message" role="status">Base map unavailable. Route lines and checkpoints can still be displayed.</p>}
       </div>
+      {showForecastControls && <section className="corridor-controls" aria-labelledby="corridor-title">
+        <div className="corridor-heading">
+          <h3 id="corridor-title">Corridor forecast</h3>
+          <label className="corridor-toggle"><input type="checkbox" checked={showCorridor}
+            onChange={(event) => setShowCorridor(event.currentTarget.checked)} /> Show overlay</label>
+        </div>
+        {showCorridor && <>
+          <div className="slider-meta">
+            <label htmlFor="corridor-hour">+{forecastHour} h</label>
+            <span>{forecast ? formatTime(forecast.valid_at) : "Forecast unavailable"}</span>
+          </div>
+          <input id="corridor-hour" type="range" min="0" max="48" step="1" value={forecastHour}
+            aria-label="Corridor forecast hour" aria-describedby="corridor-hint"
+            aria-valuetext={forecast ? `+${forecastHour} hours, ${formatTime(forecast.valid_at)}` : `+${forecastHour} hours`}
+            onChange={(event) => setForecastHour(event.currentTarget.valueAsNumber)} />
+          <div className="slider-ends"><span>+0 h</span><span>+48 h</span></div>
+          <ul className="corridor-legend" aria-label="Corridor distance by risk level at the selected hour">
+            {(Object.keys(RISK_STYLES) as (keyof typeof RISK_STYLES)[]).map((category) => <li key={category}>
+              <span aria-hidden="true" style={{ borderColor: RISK_STYLES[category].color, borderTopStyle: category === "unknown" ? "dashed" : "solid" }} />
+              {RISK_STYLES[category].label}
+              {forecastDistances && <strong>{formatDistance(forecastDistances[category])}</strong>}
+            </li>)}
+          </ul>
+          <p className="corridor-note" id="corridor-hint">
+            Map colors preview one forecast time. Checkpoint details use estimated arrival times.
+            {forecast && ` ${forecast.scored_checkpoints}/${forecast.checkpoint_count} points scored.`}
+          </p>
+        </>}
+      </section>}
       <div className="map-footer">
         {routes.length > 0 && <span>Routing by <a href="https://www.tomtom.com/">TomTom</a></span>}
         <a href="https://www.openstreetmap.org/fixthemap">Report a map issue</a>

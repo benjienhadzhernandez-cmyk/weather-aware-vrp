@@ -1,10 +1,21 @@
 export type Coordinates = { latitude: number; longitude: number };
 export type Endpoint = "origin" | "destination";
+export type RiskCategory = "low" | "moderate" | "high" | "severe" | "no_travel";
+export type CorridorHour = {
+  hour_offset: number;
+  valid_at: string;
+  risk_category: RiskCategory | null;
+  scored_checkpoints: number;
+  checkpoint_count: number;
+  checkpoint_risk_categories: (RiskCategory | null)[];
+};
 
 export type Forecast = {
   valid_at: string;
   temperature_c: number | null;
   precipitation_mm_per_h: number | null;
+  rain_in_per_h: number | null;
+  snowfall_in_per_h: number | null;
   wind_speed_m_per_s: number | null;
   wind_gust_m_per_s: number | null;
   visibility_m: number | null;
@@ -16,7 +27,7 @@ export type Checkpoint = {
   elapsed_s: number;
   arrival_at: string;
   forecast: Forecast | null;
-  risk: { score: number; factors: string[] } | null;
+  risk: { score: number; factors: string[]; category: RiskCategory } | null;
 };
 
 export type Route = {
@@ -26,10 +37,17 @@ export type Route = {
   geometry: Coordinates[];
   rank: number | null;
   weather_coverage: "complete" | "partial" | "unavailable";
+  assessment_error?: string | null;
   checkpoint_count: number;
   scored_checkpoints: number;
   peak_risk_score: number | null;
   mean_risk_score: number | null;
+  risk_category: RiskCategory | null;
+  severe_miles: number | null;
+  high_miles: number | null;
+  no_travel_miles?: number | null;
+  average_risk_score: number | null;
+  corridor_forecast: CorridorHour[];
   checkpoints: Checkpoint[];
 };
 
@@ -37,12 +55,28 @@ export type Recommendations = {
   departure_at: string;
   cargo_weight_kg: number;
   recommended_route_id: string | null;
-  recommendation_status: "recommended" | "no_routes" | "insufficient_weather";
+  recommendation_status: "recommended" | "no_routes" | "insufficient_weather" | "no_travel";
   weather_attribution: { name: string; url: string; license_url: string; description: string };
   routes: Route[];
 };
 
-export type TripFields = { origin: string; destination: string; cargo: string; departure: string };
+export type TripFields = { origin: string; destination: string; cargo: string; departure: string; interval: string };
+
+const METERS_PER_MILE = 1609.344;
+const KG_PER_POUND = 0.45359237;
+
+export const RISK_STYLES = {
+  low: { label: "Low", color: "#0f766e", index: 0 },
+  moderate: { label: "Moderate", color: "#a16207", index: 1 },
+  high: { label: "High", color: "#c2410c", index: 2 },
+  severe: { label: "Severe", color: "#b91c1c", index: 3 },
+  no_travel: { label: "No Travel", color: "#6b2173", index: 4 },
+  unknown: { label: "Unknown", color: "#64748b", index: -1 },
+} as const;
+
+export function formatPounds(kilograms: number): string {
+  return `${formatNumber(kilograms / KG_PER_POUND)} lb`;
+}
 
 const DECIMAL = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/;
 const MINUTE_MS = 60 * 1000;
@@ -68,7 +102,7 @@ export function formatNumber(value: number): string {
 }
 
 export function formatDistance(meters: number): string {
-  return `${formatNumber(meters / 1000)} km`;
+  return `${formatNumber(meters / METERS_PER_MILE)} mi`;
 }
 
 export function formatDuration(seconds: number): string {
@@ -125,13 +159,14 @@ export function tripQuery(fields: TripFields): URLSearchParams {
   }
   const cargo = Number(fields.cargo);
   if (!fields.cargo.trim() || !Number.isFinite(cargo) || cargo < 0) {
-    throw new Error("Enter a cargo weight of 0 kg or more.");
+    throw new Error("Enter a cargo weight of 0 lb or more.");
   }
 
   const query = new URLSearchParams({
     origin: `${origin.latitude},${origin.longitude}`,
     destination: `${destination.latitude},${destination.longitude}`,
-    cargo_weight_kg: String(cargo),
+    cargo_weight_kg: String(cargo * KG_PER_POUND),
+    interval_miles: fields.interval,
   });
   if (fields.departure) {
     query.set("departure_at", parseDeparture(fields.departure).toISOString());

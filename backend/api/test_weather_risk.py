@@ -6,10 +6,10 @@ from urllib.parse import parse_qs, urlsplit
 
 from django.test import SimpleTestCase, override_settings
 
-from .checkpoints import sample_checkpoints
-from .routing_models import Checkpoint, Coordinates, Route
+from .checkpoints import METERS_PER_MILE, CheckpointLimitError, sample_checkpoints
+from .routing_models import Checkpoint, Coordinates, RiskCategory, Route, WeatherForecast
 from .weather_provider import WeatherProviderError, fetch_checkpoint_forecasts
-from .weather_risk import assess_route_weather
+from .weather_risk import assess_route_weather, score_checkpoint
 
 
 def _hourly(times, **fields):
@@ -19,6 +19,9 @@ def _hourly(times, **fields):
         "wind_speed_10m": [0] * len(times),
         "wind_gusts_10m": [0] * len(times),
         "visibility": [10_000] * len(times),
+        "rain": [0] * len(times),
+        "showers": [0] * len(times),
+        "snowfall": [0] * len(times),
     }
     return {"hourly": {"time": [int(time.timestamp()) for time in times], **columns, **fields}}
 
@@ -32,7 +35,7 @@ class CheckpointSamplingTests(SimpleTestCase):
         origin = Coordinates(0, 0)
         turn = Coordinates(0, 1)
         destination = Coordinates(2, 1)
-        route = Route("route-1", (origin, turn, turn, destination), 150_000, 10_800)
+        route = Route("route-1", (origin, turn, turn, destination), 150 * METERS_PER_MILE, 10_800)
 
         checkpoints = sample_checkpoints(route)
 
@@ -43,15 +46,22 @@ class CheckpointSamplingTests(SimpleTestCase):
         self.assertAlmostEqual(checkpoints[1].position.longitude, turn.longitude)
         self.assertAlmostEqual(checkpoints[2].position.latitude, 1)
         self.assertEqual([point.elapsed_s for point in checkpoints], [0, 3_600, 7_200, 10_800])
-        self.assertEqual(checkpoints[-1].distance_from_origin_m, 150_000)
+        self.assertEqual(checkpoints[-1].distance_from_origin_m, route.distance_m)
 
-    def test_caps_checkpoint_count_and_crosses_the_antimeridian(self):
-        route = Route("route-1", (Coordinates(0, 179), Coordinates(0, -179)), 1_000_000, 30_000)
+    def test_keeps_exact_spacing_at_the_antimeridian_and_appends_short_tail(self):
+        route = Route("route-1", (Coordinates(0, 179), Coordinates(0, -179)), 120 * METERS_PER_MILE, 30_000)
 
-        checkpoints = sample_checkpoints(route)
+        checkpoints = sample_checkpoints(route, 25)
 
-        self.assertEqual(len(checkpoints), 12)
+        self.assertEqual([point.distance_from_origin_m for point in checkpoints],
+                         [miles * METERS_PER_MILE for miles in (0, 25, 50, 75, 100, 120)])
         self.assertTrue(all(abs(point.position.longitude) >= 179 for point in checkpoints))
+
+    def test_rejects_oversize_spacing_instead_of_changing_it(self):
+        route = Route("route-1", (Coordinates(0, 0), Coordinates(0, 1)), 1_201 * METERS_PER_MILE, 30_000)
+        with self.assertRaisesRegex(CheckpointLimitError, "wider interval"):
+            sample_checkpoints(route, 10)
+        self.assertLess(len(sample_checkpoints(route, 25)), 121)
 
 
 @override_settings(OPEN_METEO_API_KEY="")
@@ -109,31 +119,50 @@ class WeatherRiskTests(SimpleTestCase):
     @patch("api.weather_provider.urlopen")
     def test_does_not_substitute_missing_hour_or_measurement(self, open_url):
         open_url.return_value = _response([
-            _hourly([self.now], visibility=[None]), _hourly([self.now]),
+            _hourly([self.now], wind_gusts_10m=[None]), _hourly([self.now]),
         ])
 
         origin, destination = assess_route_weather(self.route, self.now, 5_000, now=self.now)
 
         self.assertIsNotNone(origin.forecast)
-        self.assertIsNone(origin.forecast.visibility_m)
+        self.assertIsNone(origin.forecast.wind_gust_m_per_s)
         self.assertIsNone(origin.risk)
         self.assertIsNone(destination.forecast)
         self.assertIsNone(destination.risk)
 
     @patch("api.weather_provider.urlopen")
-    def test_light_cargo_adds_wind_risk_and_extreme_weather_caps_the_score(self, open_url):
+    def test_provider_uses_rain_and_snow_depth_with_distinct_units(self, open_url):
         hours = [self.now, self.now + timedelta(hours=1)]
-        weather = _hourly(hours, wind_gusts_10m=[20, 40], precipitation=[0, 30],
-                          temperature_2m=[10, -1], visibility=[10_000, 50])
-        open_url.side_effect = [_response([weather, weather]), _response([weather, weather])]
+        weather = _hourly(hours, rain=[2.54, 0], showers=[3.81, 0], snowfall=[0, 5.08])
+        open_url.return_value = _response([weather, weather])
 
-        light = assess_route_weather(self.route, self.now, 0, now=self.now)
-        heavy = assess_route_weather(self.route, self.now, 20_000, now=self.now)
+        origin, destination = assess_route_weather(self.route, self.now, 0, now=self.now)
 
-        self.assertGreater(light[0].risk.score, heavy[0].risk.score)
-        self.assertEqual(light[0].risk.factors, ("wind",))
-        self.assertEqual(light[1].risk.score, 100)
-        self.assertIn("possible_icing", light[1].risk.factors)
+        self.assertAlmostEqual(origin.forecast.rain_in_per_h, 0.25)
+        self.assertEqual(origin.risk.category, RiskCategory.HIGH)
+        self.assertEqual(origin.risk.factors, ("rain",))
+        self.assertEqual(destination.forecast.snowfall_in_per_h, 2.0)
+        self.assertEqual(destination.risk.category, RiskCategory.SEVERE)
+        self.assertEqual(destination.risk.factors, ("snow",))
+
+    def test_risk_thresholds_and_strict_load_overrides(self):
+        point = Checkpoint("route-1", self.route.geometry[0], 0, 0)
+        for wind, rain, snow, weight, expected in (
+            (24.999, 0, 0, 0, RiskCategory.LOW), (25, 0, 0, 0, RiskCategory.MODERATE),
+            (35, 0, 0, 40_000, RiskCategory.HIGH), (35, 0, 0, 40_001, RiskCategory.SEVERE),
+            (45, 0, 0, 30_000, RiskCategory.SEVERE), (45, 0, 0, 30_001, RiskCategory.NO_TRAVEL),
+            (55, None, None, 0, RiskCategory.NO_TRAVEL), (0, 0.10, 0, 0, RiskCategory.MODERATE),
+            (0, 0.25, 0, 0, RiskCategory.HIGH), (0, 0.50, 0, 0, RiskCategory.SEVERE),
+            (0, 1.0, 0, 0, RiskCategory.SEVERE), (0, 1.01, 0, 0, RiskCategory.NO_TRAVEL),
+            (0, 0, 0.5, 0, RiskCategory.MODERATE), (0, 0, 1.0, 0, RiskCategory.HIGH),
+            (0, 0, 2.0, 0, RiskCategory.SEVERE), (0, 0, 3.0, 0, RiskCategory.SEVERE),
+            (0, 0, 3.01, 0, RiskCategory.NO_TRAVEL), (0, 0, None, 0, None),
+        ):
+            with self.subTest(wind=wind, rain=rain, snow=snow, weight=weight):
+                forecast = WeatherForecast(point, self.now, wind_speed_m_per_s=0, wind_gust_m_per_s=wind * 0.44704,
+                                           rain_in_per_h=rain, snowfall_in_per_h=snow)
+                risk = score_checkpoint(forecast, weight * 0.45359237)
+                self.assertEqual(risk.category if risk else None, expected)
 
     @patch("api.weather_provider.urlopen")
     def test_uses_customer_endpoint_and_deduplicates_coordinates(self, open_url):
@@ -147,6 +176,21 @@ class WeatherRiskTests(SimpleTestCase):
         url, = open_url.call_args.args
         self.assertEqual(urlsplit(url).netloc, "customer-api.open-meteo.com")
         self.assertEqual(parse_qs(urlsplit(url).query)["apikey"], ["test-key"])
+
+    @patch("api.weather_provider.urlopen")
+    def test_splits_large_requests_without_reordering_checkpoints(self, open_url):
+        points = [Checkpoint("route-1", Coordinates(latitude, 0), latitude, 0) for latitude in range(34)]
+
+        def weather_for_locations(url, *, timeout):
+            query = parse_qs(urlsplit(url).query)
+            locations = query["latitude"][0].split(",")
+            return _response([_hourly([self.now], temperature_2m=[int(latitude)]) for latitude in locations])
+
+        open_url.side_effect = weather_for_locations
+        forecasts = fetch_checkpoint_forecasts([(point, self.now) for point in points], now=self.now)
+
+        self.assertEqual(open_url.call_count, 2)
+        self.assertEqual([forecast.temperature_c for forecast in forecasts], list(range(34)))
 
     @patch("api.weather_provider.urlopen")
     def test_rejects_misaligned_provider_columns(self, open_url):

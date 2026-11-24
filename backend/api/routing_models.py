@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
+from enum import IntEnum
 from math import isfinite
 
 
@@ -73,6 +74,8 @@ class WeatherForecast:
     wind_speed_m_per_s: float | None = None
     wind_gust_m_per_s: float | None = None
     visibility_m: float | None = None
+    rain_in_per_h: float | None = None
+    snowfall_in_per_h: float | None = None
 
     def __post_init__(self) -> None:
         if self.valid_at.utcoffset() is None:
@@ -85,10 +88,20 @@ class WeatherForecast:
             "wind_speed_m_per_s",
             "wind_gust_m_per_s",
             "visibility_m",
+            "rain_in_per_h",
+            "snowfall_in_per_h",
         ):
             value = getattr(self, field)
             if value is not None:
                 _require_nonnegative(value, field)
+
+
+class RiskCategory(IntEnum):
+    LOW = 0
+    MODERATE = 1
+    HIGH = 2
+    SEVERE = 3
+    NO_TRAVEL = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +112,7 @@ class CheckpointRisk:
     cargo_weight_kg: float
     score: float
     factors: tuple[str, ...] = ()
+    category: RiskCategory | None = None
 
     def __post_init__(self) -> None:
         _require_nonnegative(self.cargo_weight_kg, "cargo_weight_kg")

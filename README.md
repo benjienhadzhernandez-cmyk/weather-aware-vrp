@@ -40,7 +40,9 @@ npm.cmd run dev
 
 Open the URL printed by Vite, usually `http://localhost:5173/`. Leave both servers running. Vite proxies `/api` to Django at port 8000.
 
-In RouteWise, choose **Use example** to fill a Los Angeles to Las Vegas trip, then choose **Compare routes**. To plan your own trip, enter coordinates or choose **Pick origin** and **Pick destination** on the map. Click a location or move the map with the arrow keys and press Enter to use its center. Select a route card to fit that route on the map. Click a checkpoint marker to open its forecast on the map, or use the checkpoint slider to browse forecasts in the side panel. The departure input uses the device's time zone and rejects local times that are skipped or repeated during a clock change. The OpenStreetMap basemap is optional for viewing the route lines and checkpoint data.
+In RouteWise, choose **Use example** to fill a Los Angeles to Las Vegas trip, then choose **Compare routes**. For your own trip, enter coordinates or use the map pickers, enter load weight in pounds, and select a checkpoint interval of 10, 25, or 50 miles. The departure input uses your device's time zone. It rejects local times that repeat or are skipped during a clock change.
+
+Select a route card to fit that route on the map. Click a checkpoint marker or move the checkpoint slider to inspect conditions at its estimated arrival. Use the separate **0–48 hour** corridor forecast slider to compare conditions along the selected route at one forecast hour. Changing that preview does not change the trip departure or recommendation. Segment colors approximate conditions between sampled points. The legend identifies missing data separately.
 
 ### Verify the local setup
 
@@ -56,7 +58,7 @@ With Django running, check the health endpoint and the example trip.
 
 ```powershell
 Invoke-RestMethod 'http://127.0.0.1:8000/api/health/'
-$trip = Invoke-RestMethod 'http://127.0.0.1:8000/api/recommendations/?origin=34.05,-118.25&destination=36.17,-115.14&cargo_weight_kg=5000'
+$trip = Invoke-RestMethod 'http://127.0.0.1:8000/api/recommendations/?origin=34.05,-118.25&destination=36.17,-115.14&cargo_weight_kg=5000&interval_miles=25'
 $trip.recommendation_status
 $trip.routes | Format-Table route_id, rank, weather_coverage, scored_checkpoints, checkpoint_count
 ```
@@ -88,37 +90,40 @@ The backend requests TomTom commercial truck routes and excludes options that To
 
 ## Weather at route checkpoints
 
-The backend's `assess_route_weather` function samples both route endpoints and spaces interior checkpoints along the route geometry. It aims for 50 km between checkpoints and uses at most 12 per route. Checkpoint distances and times are proportional to the route provider's total distance and estimated duration. These estimates assume uniform progress and exclude stop times.
+The backend samples both endpoints and places interior checkpoints at the selected mileage interval. The final segment can be shorter. Checkpoint positions and arrival estimates use distance along the route geometry and the routing provider's total distance and duration. The ETA estimates assume uniform progress and exclude stop times.
+
+The forecast budget is 121 checkpoints per route, allowing up to 1,200, 3,000, or 6,000 miles at the 10-, 25-, or 50-mile interval respectively. An oversized alternative stays visible but unassessed if other routes fit. If every alternative exceeds the limit, the API returns HTTP 422. Choose a wider interval or a shorter trip in that case.
 
 Forecasts come from the [Open-Meteo Forecast API](https://open-meteo.com/en/docs). Submit a timezone-aware departure time. The backend evaluates each checkpoint at the first UTC hour at or after its estimated arrival. That hour includes the preceding hour's total precipitation and maximum gust. Arrival times up to one minute before the assessment clock remain eligible so a just-submitted departure keeps its origin checkpoint. Older arrivals, arrivals beyond the seven-day UTC forecast window, and absent forecast hours have no score. A checkpoint also stays unscored when a required measurement is missing. Open-Meteo supplies the latest available forecast. The score uses no historical fallback.
 
 The public forecast endpoint supports noncommercial evaluation. For commercial use, set a subscribed `OPEN_METEO_API_KEY` in the Django server's environment to use the dedicated customer endpoint. See [Open-Meteo pricing](https://open-meteo.com/en/pricing).
 
-### Checkpoint risk score
+### Checkpoint risk levels
 
-Each component ramps linearly across its stated range and stops increasing at its maximum. The total is capped at 100.
+The highest category from wind, rain, and snowfall determines the checkpoint's risk. Wind uses the greater of sustained speed and gusts. Rain includes convective showers. Snowfall measures snow depth, separate from liquid precipitation. Shared rain and snow thresholds start the higher category, with the top **No Travel** thresholds applying strictly above 1 in/h for rain and 3 in/h for snow.
 
-- Wind contributes up to 45 base points as sustained speed or gusts rise from 10 to 30 m/s. Cargo weight multiplies the wind component by 1.35 for an empty load, tapering to 1.0 at 20,000 kg.
-- Precipitation contributes up to 30 points as hourly precipitation rises from 0 to 20 mm.
-- Low visibility contributes up to 25 points as visibility drops from 2,000 to 200 meters.
-- Possible icing adds 20 points when the temperature is at or below 1 °C and precipitation is present.
+| Measurement | Low | Moderate | High | Severe | No Travel |
+| --- | --- | --- | --- | --- | --- |
+| Wind (mph) | <25 | 25 to <35 | 35 to <45 | 45 to <55 | ≥55 |
+| Rain (in/h) | <0.10 | 0.10 to <0.25 | 0.25 to <0.50 | 0.50 to 1.00 | >1.00 |
+| Snow (in/h) | <0.5 | 0.5 to <1.0 | 1.0 to <2.0 | 2.0 to 3.0 | >3.0 |
 
-These thresholds are planning heuristics. Wind direction, vehicle dimensions, total vehicle weight, and surface temperature are outside this score.
+Wind from 45 to under 55 mph becomes **No Travel** for loads above 30,000 lb. Wind from 35 to under 45 mph becomes **Severe** for loads above 40,000 lb. Wind at or above 55 mph is **No Travel** for any load.
 
 ## Route recommendations
 
-`GET /api/recommendations/` accepts the same `origin` and `destination` parameters as `/api/routes/`, plus required `cargo_weight_kg` and optional `departure_at`. Cargo weight must be a finite, nonnegative number in kilograms. Omit departure time to use the current time, or send an ISO 8601 date and time with `Z` or a URL-encoded UTC offset. Departure can be up to seven days ahead. The API accepts a one-minute grace period for immediate departures and uses future departures to calculate TomTom travel times. Checkpoints outside the available forecast window remain unscored.
+`GET /api/recommendations/` accepts the same `origin` and `destination` parameters as `/api/routes/`, plus required `cargo_weight_kg`, optional `interval_miles` (10, 25, or 50, default 50), and optional `departure_at`. Cargo weight must be a finite, nonnegative number in kilograms. Omit departure time to use the current time, or send an ISO 8601 date and time with `Z` or a URL-encoded UTC offset. Departure can be up to seven days ahead. The API accepts a one-minute grace period for immediate departures and uses future departures to calculate TomTom travel times. Checkpoints outside the available forecast window remain unscored.
 
 ```powershell
 Invoke-RestMethod 'http://127.0.0.1:8000/api/recommendations/?origin=34.05,-118.25&destination=36.17,-115.14&cargo_weight_kg=5000' |
     ConvertTo-Json -Depth 8
 ```
 
-Only routes with a risk score at every sampled checkpoint are eligible for ranking. The API orders eligible routes by lowest peak risk, then lowest mean risk, then shortest estimated travel time. The response displays the mean rounded to one decimal. TomTom order breaks exact ties. The recommendation is the first eligible route. Routes with incomplete weather follow in provider order and retain their checkpoint results without a rank or route-level score.
+Routes with complete weather coverage and no **No Travel** checkpoint are eligible for ranking. The API orders them by fewest Severe miles, then fewest High miles, then lowest distance-weighted average risk, then shortest estimated travel time. Each segment uses the more severe classification at its endpoints. The average weights the category scores (0, 25, 50, 75, and 100) by segment distance. TomTom order breaks exact ties. Ineligible routes stay visible with their available weather details.
 
-- The response includes `departure_at`, `cargo_weight_kg`, `recommended_route_id`, `recommendation_status`, `weather_attribution`, and `routes`. The route ID is `null` when the status is `no_routes` or `insufficient_weather`.
-- Each route includes the fields returned by `/api/routes/`, plus `rank`, `weather_coverage` (`complete`, `partial`, or `unavailable`), `checkpoint_count`, `scored_checkpoints`, `peak_risk_score`, `mean_risk_score`, and `checkpoints`.
-- Checkpoints include `position`, `distance_from_origin_m`, `elapsed_s`, `arrival_at`, `forecast`, and `risk`. Forecast values use the units in their field names and include `valid_at`. A missing forecast or score is `null`. A scored checkpoint has a numeric `score` and a list of contributing `factors`.
+- The response includes `departure_at`, `cargo_weight_kg`, `recommended_route_id`, `recommendation_status`, `weather_attribution`, and `routes`. The route ID is `null` when no route is eligible.
+- Route summaries include weather coverage, checkpoint counts, risk category, Severe and High miles, and distance-weighted average risk. Checkpoints include the position, distance from origin, estimated arrival, hourly readings, and risk classification. A missing reading or classification is `null`.
+- Each route's `corridor_forecast` provides 49 hourly snapshots, starting at the first UTC forecast hour at or after the request. In each snapshot, `checkpoint_risk_categories` lists the risk categories in the same order as the route's checkpoints.
 - Validation errors return `400`, missing TomTom configuration returns `503`, and a failed routing or weather provider request returns `502` or `504` for timeouts. The routing-only endpoint keeps its existing response format.
 
 Forecast data by [Open-Meteo](https://open-meteo.com/) under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The application selects hourly samples for checkpoint arrivals and computes its own risk scores.
