@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+TOMTOM_API_KEY = os.environ.get("TOMTOM_API_KEY", "").strip()
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "local-development-only-key")
 DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"
 ALLOWED_HOSTS = [
