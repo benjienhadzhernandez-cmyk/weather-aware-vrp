@@ -33,6 +33,8 @@ npm run dev
 
 Open the URL printed by Vite. `/api` requests are proxied to Django at port 8000. The health endpoint is `http://127.0.0.1:8000/api/health/`.
 
+In RouteWise, enter origin and destination as latitude and longitude in decimal degrees and choose **Compare routes**. Select a route in the comparison and move the checkpoint slider to inspect its forecast. The basemap loads tiles from OpenStreetMap. Route lines and checkpoint data remain available on a plain background if tiles cannot load.
+
 The backend supports `DJANGO_DEBUG`, `DJANGO_SECRET_KEY`, and `DJANGO_ALLOWED_HOSTS` environment variables. Defaults are for local development only; configure a strong secret and disable debug mode before deployment.
 
 ## Truck route options
