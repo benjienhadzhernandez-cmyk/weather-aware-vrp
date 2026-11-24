@@ -57,8 +57,25 @@ h2 { font-size: 21px; line-height: 1.35; font-weight: 800; }
 .form-error { margin: 0; padding: 10px 12px; border: 1px solid #e4b8b0; border-radius: 8px; background: #fff4f1; color: #87392e; font-size: 13px; }
 
 .map-panel { display: flex; flex-direction: column; }
+.map-pick-tools { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px; }
+.map-pick-tools [aria-pressed="true"] { background: var(--deep-green); color: #fff; }
+.map-pick-tools [aria-pressed="true"]:hover { background: #236a57; }
+.map-pick-status { min-height: 1.5em; margin: 5px 12px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .map-frame { position: relative; isolation: isolate; flex: 1; min-height: 368px; margin: 0 12px; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: #e8efeb; }
 .map { position: absolute; inset: 0; background: #e8efeb; }
+.map--picking, .map--picking .leaflet-interactive { cursor: crosshair; }
+.map:focus-visible { outline-offset: -3px; }
+.map-crosshair { position: absolute; z-index: 500; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #174b3d; font-size: 31px; line-height: 1; font-weight: 800; text-shadow: 0 0 4px #fff, 0 0 4px #fff; pointer-events: none; }
+.endpoint-pin { display: grid; place-items: center; border: 2px solid #fff; border-radius: 50%; background: #164b3d; color: #fff; font-size: 11px; font-weight: 800; box-shadow: 0 1px 5px #0005; }
+.endpoint-pin--destination { background: #8a461d; }
+.map .leaflet-interactive:focus-visible { outline-offset: 2px; }
+.checkpoint-popup .leaflet-popup-content { margin: 13px 18px 12px 13px; }
+.checkpoint-popup h3 { margin: 0; color: #173c31; font-size: 14px; }
+.checkpoint-popup .checkpoint-times { margin: 8px 0 6px; }
+.checkpoint-popup .checkpoint-times, .checkpoint-popup .forecast-grid { gap: 5px; }
+.checkpoint-popup .forecast-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.checkpoint-popup .checkpoint-times > div, .checkpoint-popup .forecast-grid > div { padding: 5px; }
+.checkpoint-popup .checkpoint-note { margin: 7px 0 0; font-size: 12px; }
 .map-message { position: absolute; z-index: 1000; top: 9px; left: 58px; right: 9px; width: fit-content; max-width: calc(100% - 67px); margin: 0; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: #fff; font-size: 12px; color: var(--muted); }
 .map-footer { display: flex; justify-content: flex-end; gap: 13px; flex-wrap: wrap; padding: 8px 16px 11px; color: var(--muted); font-size: 11px; }
 

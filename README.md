@@ -40,7 +40,7 @@ npm.cmd run dev
 
 Open the URL printed by Vite, usually `http://localhost:5173/`. Leave both servers running. Vite proxies `/api` to Django at port 8000.
 
-In RouteWise, choose **Use example** to fill a Los Angeles to Las Vegas trip, then choose **Compare routes**. Select a route and move the checkpoint slider to inspect its forecast. You can also enter your own coordinates as latitude and longitude in decimal degrees. The departure input uses the device's time zone and rejects local times that are skipped or repeated during a clock change. The OpenStreetMap basemap is optional for viewing the route lines and checkpoint data.
+In RouteWise, choose **Use example** to fill a Los Angeles to Las Vegas trip, then choose **Compare routes**. To plan your own trip, enter coordinates or choose **Pick origin** and **Pick destination** on the map. Click a location or move the map with the arrow keys and press Enter to use its center. Select a route card to fit that route on the map. Click a checkpoint marker to open its forecast on the map, or use the checkpoint slider to browse forecasts in the side panel. The departure input uses the device's time zone and rejects local times that are skipped or repeated during a clock change. The OpenStreetMap basemap is optional for viewing the route lines and checkpoint data.
 
 ### Verify the local setup
 

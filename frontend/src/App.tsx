@@ -1,25 +1,26 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
+import CheckpointDetails from "./CheckpointDetails";
 import RouteMap from "./RouteMap";
-import { fetchRecommendations, formatDistance, formatDuration, formatNumber, formatTime, routeStyle, tripQuery } from "./routes";
-import type { Recommendations, Route, TripFields } from "./routes";
+import type { RouteMapHandle } from "./RouteMap";
+import { fetchRecommendations, formatDistance, formatDuration, formatNumber, formatTime, parseCoordinates, routeStyle, tripQuery } from "./routes";
+import type { Coordinates, Recommendations, Route, TripFields } from "./routes";
 
 type ConnectionState = "checking" | "connected" | "unavailable";
 
 const EMPTY_ROUTES: Route[] = [];
 const INITIAL_FIELDS: TripFields = { origin: "", destination: "", cargo: "", departure: "" };
-const FACTORS: Record<string, string> = {
-  wind: "Wind", precipitation: "Precipitation", low_visibility: "Low visibility", possible_icing: "Possible icing",
-};
 
-function forecastValue(value: number | null | undefined, unit: string): string {
-  return value == null ? "Unavailable" : `${formatNumber(value)} ${unit}`;
+function endpointCoordinates(value: string): Coordinates | null {
+  try {
+    return parseCoordinates(value, "Location");
+  } catch {
+    return null;
+  }
 }
 
 function ForecastPanel({ route, index, onChange }: { route: Route | undefined; index: number; onChange: (value: number) => void }) {
   const checkpoint = route?.checkpoints[index];
-  const forecast = checkpoint?.forecast;
-  const risk = checkpoint?.risk;
 
   return (
     <section className="panel forecast-panel" aria-labelledby="forecast-title">
@@ -39,21 +40,7 @@ function ForecastPanel({ route, index, onChange }: { route: Route | undefined; i
             disabled={route.checkpoints.length < 2} onChange={(event) => onChange(event.currentTarget.valueAsNumber)}
             aria-valuetext={`Checkpoint ${index + 1} of ${route.checkpoints.length}, ${formatTime(checkpoint.arrival_at)}`} />
           <div className="slider-ends"><span>Origin</span><span>Destination</span></div>
-          <div className="checkpoint-times">
-            <div><span>Estimated arrival</span><strong>{formatTime(checkpoint.arrival_at)}</strong></div>
-            <div><span>Forecast time</span><strong>{forecast ? formatTime(forecast.valid_at) : "Unavailable"}</strong></div>
-          </div>
-          <dl className="forecast-grid">
-            <div><dt>Temperature</dt><dd>{forecastValue(forecast?.temperature_c, "°C")}</dd></div>
-            <div><dt>Precipitation</dt><dd>{forecastValue(forecast?.precipitation_mm_per_h, "mm/h")}</dd></div>
-            <div><dt>Wind</dt><dd>{forecastValue(forecast?.wind_speed_m_per_s, "m/s")}</dd></div>
-            <div><dt>Wind gusts</dt><dd>{forecastValue(forecast?.wind_gust_m_per_s, "m/s")}</dd></div>
-            <div><dt>Visibility</dt><dd>{forecastValue(forecast?.visibility_m, "m")}</dd></div>
-            <div><dt>Weather risk</dt><dd>{risk ? `${formatNumber(risk.score)} / 100` : "Unscored"}</dd></div>
-          </dl>
-          {risk?.factors.length ? <p className="checkpoint-note">Risk factors {risk.factors.map((factor) => FACTORS[factor] ?? factor).join(", ")}</p> : null}
-          {!forecast && <p className="checkpoint-note">Forecast data is unavailable for this arrival.</p>}
-          {forecast && !risk && <p className="checkpoint-note">Some measurements are missing, so this checkpoint is unscored.</p>}
+          <CheckpointDetails checkpoint={checkpoint} />
         </div>
       ) : <p className="empty-state">Select a route to explore its forecast.</p>}
     </section>
@@ -69,6 +56,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const request = useRef<AbortController | null>(null);
+  const routeMap = useRef<RouteMapHandle>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -87,6 +75,8 @@ export default function App() {
 
   const routes = results?.routes ?? EMPTY_ROUTES;
   const selectedRoute = routes.find((route) => route.route_id === selectedId);
+  const origin = useMemo(() => endpointCoordinates(fields.origin), [fields.origin]);
+  const destination = useMemo(() => endpointCoordinates(fields.destination), [fields.destination]);
   const connectionText = { checking: "Checking API", connected: "API connected", unavailable: "API unavailable" }[connection];
 
   function setField(field: keyof TripFields, value: string) {
@@ -164,7 +154,7 @@ export default function App() {
             }}>Use example</button>
           </div>
           <form className="trip-form" onSubmit={submitTrip} aria-busy={isLoading}>
-            <p className="field-hint" id="coordinates-hint">Enter latitude and longitude in decimal degrees.</p>
+            <p className="field-hint" id="coordinates-hint">Pick locations on the map or enter latitude and longitude in decimal degrees.</p>
             <label>Origin
               <input type="text" value={fields.origin} placeholder="34.05, -118.25" required
                 aria-describedby="coordinates-hint" onChange={(event) => setField("origin", event.currentTarget.value)} />
@@ -187,7 +177,9 @@ export default function App() {
           </form>
         </section>
 
-        <RouteMap routes={routes} selectedRoute={selectedRoute} checkpointIndex={checkpointIndex} onCheckpointSelect={setCheckpointIndex} />
+        <RouteMap ref={routeMap} routes={routes} selectedRoute={selectedRoute} checkpointIndex={checkpointIndex}
+          onCheckpointSelect={setCheckpointIndex} origin={origin} destination={destination}
+          onEndpointPick={(endpoint, position) => setField(endpoint, `${position.latitude.toFixed(6)}, ${position.longitude.toFixed(6)}`)} />
 
         <section className="panel results-panel" aria-labelledby="results-title">
           <div className="panel-heading"><h2 id="results-title">Route comparison</h2></div>
@@ -206,7 +198,13 @@ export default function App() {
                 {routes.map((route, index) => (
                   <li key={route.route_id}>
                     <button type="button" className="route-option" aria-pressed={route.route_id === selectedId}
-                      onClick={() => { setSelectedId(route.route_id); setCheckpointIndex(0); }}>
+                      onClick={() => {
+                        if (route.route_id !== selectedId) {
+                          setSelectedId(route.route_id);
+                          setCheckpointIndex(0);
+                        }
+                        routeMap.current?.fitRoute(route.route_id);
+                      }}>
                       <span className="route-option-heading">
                         <span className="route-title"><span className="route-swatch" aria-hidden="true"
                           style={{ borderColor: routeStyle(index).color, borderTopStyle: index === 0 ? "solid" : index === 1 ? "dashed" : "dotted" }} />

@@ -1,4 +1,5 @@
 export type Coordinates = { latitude: number; longitude: number };
+export type Endpoint = "origin" | "destination";
 
 export type Forecast = {
   valid_at: string;
@@ -80,7 +81,7 @@ export function formatTime(value: string): string {
   return TIME_FORMAT.format(new Date(value));
 }
 
-function parseCoordinates(value: string, label: string): Coordinates {
+export function parseCoordinates(value: string, label: string): Coordinates {
   const parts = value.split(",").map((part) => part.trim());
   const [latitude, longitude] = parts.map(Number);
   if (parts.length !== 2 || !parts.every((part) => DECIMAL.test(part)) ||
