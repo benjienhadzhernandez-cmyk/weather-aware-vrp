@@ -4,7 +4,7 @@ import json
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from http.client import HTTPException
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
@@ -27,6 +27,10 @@ _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 class WeatherProviderError(Exception):
     """The forecast provider could not return a usable response."""
+
+
+class WeatherProviderTimeout(WeatherProviderError):
+    """The provider did not respond within the forecast request timeout."""
 
 
 def fetch_checkpoint_forecasts(
@@ -93,6 +97,14 @@ def _load_hourly(positions: list[Coordinates], api_key: str) -> list[dict]:
         return [_hourly_data(row) for row in rows]
     except HTTPError as error:
         error.close()
+        if error.code in (408, 504):
+            raise WeatherProviderTimeout("Weather provider timed out") from None
+        raise WeatherProviderError("Weather provider is unavailable") from None
+    except TimeoutError:
+        raise WeatherProviderTimeout("Weather provider timed out") from None
+    except URLError as error:
+        if isinstance(error.reason, TimeoutError):
+            raise WeatherProviderTimeout("Weather provider timed out") from None
         raise WeatherProviderError("Weather provider is unavailable") from None
     except (OSError, HTTPException, ValueError, TypeError, KeyError):
         raise WeatherProviderError("Weather provider is unavailable") from None

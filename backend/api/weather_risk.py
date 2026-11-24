@@ -1,5 +1,6 @@
 """Estimate weather exposure and cargo-aware risk at route checkpoints."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from math import isfinite
@@ -27,6 +28,18 @@ def assess_route_weather(
     now: datetime | None = None,
 ) -> tuple[CheckpointAssessment, ...]:
     """Sample and assess one route, preserving checkpoints without usable data."""
+    assessments, = assess_routes_weather((route,), departure_at, cargo_weight_kg, now=now)
+    return assessments
+
+
+def assess_routes_weather(
+    routes: Sequence[Route],
+    departure_at: datetime,
+    cargo_weight_kg: float,
+    *,
+    now: datetime | None = None,
+) -> tuple[tuple[CheckpointAssessment, ...], ...]:
+    """Assess routes in one provider batch, preserving route and checkpoint order."""
     if departure_at.utcoffset() is None:
         raise ValueError("departure_at must include a time zone")
     if not isfinite(cargo_weight_kg) or cargo_weight_kg < 0:
@@ -34,19 +47,27 @@ def assess_route_weather(
 
     now = datetime.now(UTC) if now is None else now
     departure_at = departure_at.astimezone(UTC)
-    arrivals = [
-        (checkpoint, departure_at + timedelta(seconds=checkpoint.elapsed_s))
-        for checkpoint in sample_checkpoints(route)
+    by_route = [
+        [(point, departure_at + timedelta(seconds=point.elapsed_s)) for point in sample_checkpoints(route)]
+        for route in routes
     ]
+    arrivals = [arrival for route_arrivals in by_route for arrival in route_arrivals]
     forecasts = fetch_checkpoint_forecasts(
         arrivals,
         now=now,
         api_key=settings.OPEN_METEO_API_KEY,
     )
-    return tuple(
+    assessments = tuple(
         CheckpointAssessment(checkpoint, arrival, forecast, _score(forecast, cargo_weight_kg))
         for (checkpoint, arrival), forecast in zip(arrivals, forecasts, strict=True)
     )
+    grouped = []
+    offset = 0
+    for route_arrivals in by_route:
+        end = offset + len(route_arrivals)
+        grouped.append(assessments[offset:end])
+        offset = end
+    return tuple(grouped)
 
 
 def _score(forecast: WeatherForecast | None, cargo_weight_kg: float) -> CheckpointRisk | None:

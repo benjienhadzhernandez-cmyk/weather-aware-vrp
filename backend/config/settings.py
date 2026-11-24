@@ -3,7 +3,11 @@
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR.parent / ".env", override=False)
+
 TOMTOM_API_KEY = os.environ.get("TOMTOM_API_KEY", "").strip()
 OPEN_METEO_API_KEY = os.environ.get("OPEN_METEO_API_KEY", "").strip()
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "local-development-only-key")

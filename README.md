@@ -37,12 +37,13 @@ The backend supports `DJANGO_DEBUG`, `DJANGO_SECRET_KEY`, and `DJANGO_ALLOWED_HO
 
 ## Truck route options
 
-Set `TOMTOM_API_KEY` in the backend PowerShell session before starting Django. Use a TomTom key with Routing API access and keep it on the server.
+If the project root has no `.env`, copy the template:
 
 ```powershell
-$env:TOMTOM_API_KEY = '<your TomTom API key>'
-python backend\manage.py runserver 8000
+Copy-Item .env.example .env
 ```
+
+Open `.env`, paste your TomTom Routing API key after `TOMTOM_API_KEY=`, and restart Django. The file also supports optional Open-Meteo and Django settings. Existing environment variables take precedence. Git ignores `.env`.
 
 From a second terminal, send origin and destination as `latitude,longitude` in signed decimal degrees.
 
@@ -72,4 +73,22 @@ Each component ramps linearly across its stated range and stops increasing at it
 - Low visibility contributes up to 25 points as visibility drops from 2,000 to 200 meters.
 - Possible icing adds 20 points when the temperature is at or below 1 °C and precipitation is present.
 
-These thresholds are planning heuristics. Wind direction, vehicle dimensions, total vehicle weight, and surface temperature are outside this score. The route ranking API, map, and forecast visualization are planned for later steps.
+These thresholds are planning heuristics. Wind direction, vehicle dimensions, total vehicle weight, and surface temperature are outside this score.
+
+## Route recommendations
+
+`GET /api/recommendations/` accepts the same `origin` and `destination` parameters as `/api/routes/`, plus required `cargo_weight_kg` and optional `departure_at`. Cargo weight must be a finite, nonnegative number in kilograms. Omit departure time to use the current time, or send an ISO 8601 date and time with `Z` or a URL-encoded UTC offset. Departure can be up to seven days ahead. The API accepts a one-minute grace period for immediate departures and uses future departures to calculate TomTom travel times. Checkpoints outside the available forecast window remain unscored.
+
+```powershell
+Invoke-RestMethod 'http://127.0.0.1:8000/api/recommendations/?origin=34.05,-118.25&destination=36.17,-115.14&cargo_weight_kg=5000' |
+    ConvertTo-Json -Depth 8
+```
+
+Only routes with a risk score at every sampled checkpoint are eligible for ranking. The API orders eligible routes by lowest peak risk, then lowest mean risk, then shortest estimated travel time. The response displays the mean rounded to one decimal. TomTom order breaks exact ties. The recommendation is the first eligible route. Routes with incomplete weather follow in provider order and retain their checkpoint results without a rank or route-level score.
+
+- The response includes `departure_at`, `cargo_weight_kg`, `recommended_route_id`, `recommendation_status`, `weather_attribution`, and `routes`. The route ID is `null` when the status is `no_routes` or `insufficient_weather`.
+- Each route includes the fields returned by `/api/routes/`, plus `rank`, `weather_coverage` (`complete`, `partial`, or `unavailable`), `checkpoint_count`, `scored_checkpoints`, `peak_risk_score`, `mean_risk_score`, and `checkpoints`.
+- Checkpoints include `position`, `distance_from_origin_m`, `elapsed_s`, `arrival_at`, `forecast`, and `risk`. Forecast values use the units in their field names and include `valid_at`. A missing forecast or score is `null`. A scored checkpoint has a numeric `score` and a list of contributing `factors`.
+- Validation errors return `400`, missing TomTom configuration returns `503`, and a failed routing or weather provider request returns `502` or `504` for timeouts. The routing-only endpoint keeps its existing response format.
+
+Forecast data by [Open-Meteo](https://open-meteo.com/) under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The application selects hourly samples for checkpoint arrivals and computes its own risk scores.

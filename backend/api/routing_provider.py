@@ -1,6 +1,7 @@
 """TomTom adapter for truck route alternatives."""
 
 import json
+from datetime import datetime
 from decimal import Decimal
 from http.client import HTTPException
 from urllib.error import HTTPError, URLError
@@ -24,10 +25,16 @@ class RoutingTimeout(RoutingProviderError):
     """The connection to the provider timed out."""
 
 
-def find_truck_routes(origin: Coordinates, destination: Coordinates, api_key: str) -> list[Route]:
+def find_truck_routes(
+    origin: Coordinates,
+    destination: Coordinates,
+    api_key: str,
+    *,
+    depart_at: datetime | None = None,
+) -> list[Route]:
     """Return distinct truck routes in provider order."""
     locations = f"{_location(origin)}:{_location(destination)}"
-    query = urlencode({
+    query = {
         "key": api_key,
         "travelMode": "truck",
         "vehicleCommercial": "true",
@@ -35,9 +42,11 @@ def find_truck_routes(origin: Coordinates, destination: Coordinates, api_key: st
         "alternativeType": "anyRoute",
         "routeRepresentation": "polyline",
         "sectionType": "travelMode",
-    })
+    }
+    if depart_at is not None:
+        query["departAt"] = depart_at.isoformat()
     try:
-        with urlopen(f"{_BASE_URL}/{locations}/json?{query}", timeout=_TIMEOUT_S) as response:
+        with urlopen(f"{_BASE_URL}/{locations}/json?{urlencode(query)}", timeout=_TIMEOUT_S) as response:
             return _parse_routes(_read_json(response))
     except HTTPError as error:
         with error:
