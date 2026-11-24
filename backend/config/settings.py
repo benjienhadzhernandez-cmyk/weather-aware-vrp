@@ -17,6 +17,10 @@ ALLOWED_HOSTS = [
     for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
     if host.strip()
 ]
+for variable in ("VERCEL_URL", "VERCEL_PROJECT_PRODUCTION_URL", "VERCEL_BRANCH_URL"):
+    hostname = os.environ.get(variable, "").strip()
+    if hostname and hostname not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(hostname)
 
 INSTALLED_APPS = ["django.contrib.contenttypes", "django.contrib.staticfiles", "api"]
 MIDDLEWARE = ["django.middleware.security.SecurityMiddleware", "django.middleware.common.CommonMiddleware"]
